@@ -1,0 +1,290 @@
+---
+title: 'Game of thrones'
+date: '12-05-2025'
+Author: 'Asger, Joe, Christian and Kamilla'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE)
+
+library(tidyverse)
+library(here)
+
+library(pdftools)
+library(tidytext)
+library(textdata) 
+library(ggwordcloud)
+
+```
+
+
+### Get the GOT text:
+```{r get-document}
+Got_path <- here("data/got.pdf")
+Got_path
+Got_text <- pdf_text(Got_path)
+```
+
+
+Example: Just want to get text from a single page (e.g. Page 9)? 
+```{r single-page}
+Got_p9 <- Got_text[9]
+Got_p9
+```
+
+### Some wrangling:
+
+- Split up pages into separate lines (separated by `\n`) using `stringr::str_split()`
+- Unnest into regular columns using `tidyr::unnest()`
+- Remove leading/trailing white space with `stringr::str_trim()`
+
+```{r split-lines}
+Got_df <- data.frame(Got_text) %>% 
+  mutate(text_full = str_split(Got_text, pattern = '\n')) %>% 
+  unnest(text_full) %>% 
+  mutate(text_full = str_trim(text_full))
+
+Got_df
+```
+
+Now each line, on each page, is its own row, with extra starting & trailing spaces removed. 
+
+### Get the tokens (individual words) in tidy format
+
+Split columns into tokens. We are interested in *words*, so that's the token we'll use:
+
+```{r tokenize}
+Got_tokens <- Got_df %>% 
+  unnest_tokens(word, text_full)
+Got_tokens
+```
+
+
+```{r count-words}
+Got_wc <- Got_tokens %>% 
+  count(word) %>% 
+  arrange(-n)
+Got_wc
+```
+
+### Remove stop words:
+We will *remove* stop words using `tidyr::anti_join()`:
+```{r stopwords}
+view(stop_words)
+stop_words
+
+Got_stop <- Got_tokens %>% 
+  anti_join(stop_words) %>% 
+  select(-Got_text)
+```
+
+Now check the counts again: 
+```{r count-words2}
+Got_swc <- Got_stop %>% 
+  count(word) %>% 
+  arrange(-n)
+Got_swc
+```
+
+Get rid of all the numbers (non-text) in `Got_stop`?
+```{r skip-numbers}
+Got_no_numeric <- Got_stop %>% 
+  filter(is.na(as.numeric(word)))
+```
+
+### A word cloud of IPCC report words (non-numeric)
+
+```{r wordcloud-prep}
+
+length(unique(Got_no_numeric$word))
+
+#the top 100 most frequent
+Got_top100 <- Got_no_numeric %>% 
+  count(word) %>% 
+  arrange(-n) %>% 
+  head(100)
+Got_top100
+```
+
+```{r wordcloud}
+Got_cloud <- ggplot(data = Got_top100, aes(label = word)) +
+  geom_text_wordcloud() +
+  theme_minimal()
+
+Got_cloud
+```
+
+Customizing:
+```{r wordcloud-pro}
+ggplot(data = Got_top100, aes(label = word, size = n)) +
+  geom_text_wordcloud_area(aes(color = n), shape = "star") +
+  scale_size_area(max_size = 12) +
+  scale_color_gradientn(colors = c("darkgreen","blue","red")) +
+  theme_minimal()
+```
+
+
+### Sentiment analysis
+
+"afinn": Words ranked from -5 (very negative) to +5 (very positive)
+```{r afinn}
+get_sentiments(lexicon = "afinn")
+
+#Positive words:
+afinn_pos <- get_sentiments("afinn") %>% 
+  filter(value %in% c(3,4,5))
+afinn_pos
+```
+
+bing: binary, "positive" or "negative"
+```{r bing}
+get_sentiments(lexicon = "bing")
+```
+
+
+Includes bins for 8 emotions (anger, anticipation, disgust, fear, joy, sadness, surprise, trust) and positive / negative. 
+**Citation for NRC lexicon**: Crowdsourcing a Word-Emotion Association Lexicon, Saif Mohammad and Peter Turney, Computational Intelligence, 29 (3), 436-465, 2013.
+
+Now nrc:
+```{r nrc}
+get_sentiments(lexicon = "nrc")
+```
+
+Sentiment analysis on the Got_text data using afinn, and nrc. 
+
+
+### Sentiment analysis with afinn: 
+
+```{r bind-afinn}
+Got_afinn <- Got_stop %>% 
+  inner_join(get_sentiments("afinn"))
+Got_afinn
+```
+
+```{r count-afinn}
+Got_afinn_hist <- Got_afinn %>% 
+  count(value)
+
+ggplot(data = Got_afinn_hist, aes(x = value, y = n)) +
+  geom_col(aes(fill = value)) +
+  theme_bw()
+```
+
+Investigate: Value 2
+```{r afinn-2}
+Got_afinn2 <- Got_afinn %>% 
+  filter(value == 2)
+```
+
+```{r afinn-2-more}
+unique(Got_afinn2$word)
+
+Got_afinn2_n <- Got_afinn2 %>% 
+  count(word, sort = TRUE) %>% 
+  mutate(word = fct_reorder(factor(word), n)) %>% 
+  slice(1:20)
+
+ggplot(data = Got_afinn2_n, aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  theme_bw()
+```
+Summarize sentiment for the report: 
+```{r summarize-afinn}
+Got_summary <- Got_afinn %>% 
+  summarize(
+    mean_score = mean(value),
+    median_score = median(value)
+  )
+Got_summary
+```
+
+The mean and median indicate negative overall sentiments based on the AFINN lexicon. 
+
+### NRC lexicon for sentiment analysis
+
+```{r bind-bing}
+Got_nrc <- Got_stop %>% 
+  inner_join(get_sentiments("nrc"))
+```
+
+Check which are excluded using `anti_join()`:
+
+```{r check-exclusions}
+Got_exclude <- Got_stop %>% 
+  anti_join(get_sentiments("nrc"))
+
+View(Got_exclude)
+
+# Count to find the most excluded:
+Got_exclude_n <- Got_exclude %>% 
+  count(word, sort = TRUE)
+
+head(Got_exclude_n)
+```
+
+Now find some counts: 
+```{r count-bing}
+Got_nrc_n <- Got_nrc %>% 
+  count(sentiment, sort = TRUE)
+ggplot(data = Got_nrc_n, aes(x = sentiment, y = n)) +
+  geom_col(aes(fill = sentiment))+
+  theme_bw()
+```
+
+Or count by sentiment *and* word, then facet:
+```{r count-nrc}
+Got_nrc_n5 <- Got_nrc %>% 
+  count(word,sentiment, sort = TRUE) %>% 
+  group_by(sentiment) %>% 
+  top_n(5) %>% 
+  ungroup()
+
+Got_nrc_n5
+
+Got_nrc_gg <- ggplot(data = Got_nrc_n5, aes(x = reorder(word,n), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, ncol = 2, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  labs(x = "Word", y = "count")
+
+Got_nrc_gg
+
+ggsave(plot = Got_nrc_gg, 
+       here("figures","Got_nrc_sentiment.png"), 
+       height = 8, 
+       width = 5)
+
+```
+Leave is under surprise? check: 
+```{r nrc-leave}
+leave <- get_sentiments(lexicon = "nrc") %>% 
+  filter(word == "leave")
+
+leave
+```
+
+
+## Your task
+
+Taking this script as a point of departure, apply sentiment analysis on the Game of Thrones. You will find a pdf in the data folder. What are the most common meaningful words and what emotions do you expect will dominate this volume? Are there any terms that are similarly ambiguous to the 'confidence' above? 
+
+The most meaningful words in GOT using the 10 categories are: 
+Anger - Stone, 
+Disgust - lord, 
+Joy - found, 
+Positive - lord, 
+Surprise - leave, 
+Anticipation - Time, 
+Fear - watch, 
+Negative - lord, 
+Sadness - dark, 
+Trust - lord. 
+The most common are lord, Jon, Ned etc., which makes sense since the story involves those characters. 
+I would expect it to be more negative, which is true, but there is a lot of positive words too. 
+There is a lot of ambiguous words though. Some words fits in the same categories. 
+
