@@ -1,0 +1,168 @@
+---
+---
+title: "Final project Sukker"
+author: "Kamilla Dalgaard, Joe Timmins, Asger Tonsberg og Christian Bæk"
+date: "2025-05-08"
+output: html_document
+---
+
+We have used the API which delivers data from the Royal Danish Library's newspaper collection. The data data from the Danish newspapers has to be older than 140 years to be "public data". The API is presented in the Swagger UI and returns the data to us in JSON, JSONL and CSV formats. Requests to the API are based on search queries in the Mediestream-platform.  
+
+Technical documentation and explanations on with fields are exported can be found on the [Swagger UI](http://labs.statsbiblioteket.dk/labsapi/api//api-docs?url=/labsapi/api/openapi.yaml)
+
+# Loading relevant libraries
+
+The dataset is processed in the software programme R, offering various methods for statistical analysis and graphic representation of the results. In R, one works with packages each adding numerous functionalities to the core functions of R. In this example, the relevant packages are:
+
+Documentation for each package: <br>
+*https://www.tidyverse.org/packages/ <br>
+*https://cran.r-project.org/web/packages/tidytext/vignettes/tidytext.html <br>
+*https://lubridate.tidyverse.org/ <br>
+*https://ggplot2.tidyverse.org/ <br>
+*https://cran.r-project.org/web/packages/ggwordcloud/vignettes/ggwordcloud.html<br>
+
+Additional information about R: 
+https://www.r-project.org/
+
+```{r, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(ggwordcloud)
+library(urltools)
+```
+
+# Loading data from newspapers from 1850-1885 that have adverts about sugar in them.
+
+The dataset is loaded into R via a retrieve link from the API. This link is created by the [Swagger UI](http://labs.statsbiblioteket.dk/labsapi/api//api-docs?url=/labsapi/api/openapi.yaml), which is documentation and user interface for the API. 
+
+```{r}
+Sukker <- "https://labs.statsbiblioteket.dk/labsapi/api/aviser/export/fields?query=Sukker%20AND%20lplace%3AK%C3%B8benhavn%20py%3A%5B1850%20TO%201885%5D&fields=link&fields=recordID&fields=timestamp&fields=pwa&fields=cer&fields=fulltext_org&fields=pageUUID&fields=editionUUID&fields=titleUUID&fields=editionId&fields=familyId&fields=newspaper_page&fields=newspaper_edition&fields=lplace&fields=location_name&fields=location_coordinates&max=-1&structure=header&structure=content&format=CSV"
+```
+
+
+We will use the url_decode function to make the URL more readable. The URL is also stored in R:
+
+
+```{r}
+url_decode(Sukker)
+```
+
+
+Now it's also able to see the query we used in mediastream.
+
+Next step is to load our data into R using the read_csv function: 
+
+```{r}
+Sukker_1850_1885 <- read_csv(Sukker)
+```
+
+
+## Analysing data from Mediestream-API
+
+By doing this we can see as we targeted the news papers are from copenhagen and we have 82449 hits. This gives us some metadata about the newspapers. 
+
+```{r}
+Sukker_1850_1885 %>% 
+  count(lplace, sort = TRUE)
+```
+We also have meta data on which newspapers the articles derives from: 
+
+```{r}
+Sukker_1850_1885 %>% 
+  count(familyId, sort = TRUE)
+```
+
+# Text mining: 
+Here we will use the tidy text package with the unnest_tokens function to text mine our data.the unnest_tokens package takes texts and breaks it into individual words. In this way, there will be just one word per row in the dataset. this makes it possible for us to target the word "tobak". This helps us clean it and now our data isn't messy any more and now we have Tobak_tidy
+
+```{r}
+Sukker_tidy <- Sukker_1850_1885 %>% 
+  unnest_tokens(word, fulltext_org)
+```
+
+To clean the data more we loaded in a stopword list which will sort out all the most common words such as "at", "det" etc. We got the stopwordlist from Max Odbjerg.
+
+```{r}
+stopord_1800 <- read_csv("https://gist.githubusercontent.com/maxodsbjerg/1537cf14c3d46b3d30caa5d99f8758e9/raw/9f044a38505334f035be111c9a3f654a24418f6d/stopord_18_clean.csv")
+```
+
+Using "anti_join" before "count" we can sort out the stop words. We did this to see how frequent the word "sukker" came up in the newspapers: 
+
+```{r}
+Sukker_tidy %>% 
+  anti_join(stopord_1800) %>% 
+  count(word, sort = TRUE)
+```
+
+As we can see sukker is quite frequent in the newspaper which could indicate it was advertised a lot
+
+
+```{r}
+Sukker_most_used <- Sukker_tidy %>% 
+  anti_join(stopord_1800) %>% 
+  count(word, sort = TRUE)
+
+most_used_word <- Sukker_most_used %>%
+  slice(1)
+
+print(Sukker_most_used)
+```
+
+```{r}
+Sukker_most_used <- Sukker_tidy %>% 
+  anti_join(stopord_1800) %>% 
+  count(word, sort = TRUE)
+
+most_used_word <- Sukker_most_used %>%
+  slice(2)
+
+print(most_used_word)
+```
+
+```{r}
+#to make the graph we dowload the necesary packages dplyr will help us filter the word "tobak" and 
+# ggplot2 will make it possible for us to make graphs and add trend line. 
+library(dplyr)
+library(ggplot2)
+
+# Here we will filter for the word "tobak" and count per year
+Sukker_over_time <- Sukker_tidy %>%
+  filter(word == "sukker") %>%
+  count(timestamp)
+
+# Code for the Graph
+sukker_plot <- ggplot(Sukker_over_time, aes(x = timestamp, y = n)) +
+  geom_line(color = "magenta", size = 1) +
+  labs(
+    title = 'The Development of sugar ads during 1850-1885',
+    x = "Year",
+    y = "Hits"
+  ) +  theme_minimal()
+
+print(sukker_plot)
+```
+
+```{r}
+#code for generating the picture
+ggsave("sukker_over_time.png", plot = sukker_plot, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+#code for graph with trendline
+sukker_plot_with_line <- ggplot(Sukker_over_time, aes(x = timestamp, y = n)) +
+  geom_line(color = "magenta", size = 1) +
+  geom_smooth(method = "loess", se = FALSE, color = "darkgreen", size = 1) +  # Trend line
+  labs(
+    title = 'The Development of Sugar Ads During 1850–1885',
+    x = "Year",
+    y = "Hits"
+  ) +
+  theme_minimal()
+
+print(sukker_plot_with_line)
+```
+
+```{r}
+ggsave("sukker_over_time_with_line.png", plot = sukker_plot_with_line, width = 8, height = 6, dpi = 300)
+```
+
